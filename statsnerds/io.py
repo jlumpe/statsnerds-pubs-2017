@@ -62,10 +62,30 @@ def parse_illumina_header(header):
 		raise ValueError('Invalid header line: {}'.format(exc)) from None
 
 
+def to_file_obj(file, mode='rt'):
+	"""Converts a file argument from several formats to an open file object.
+
+	:param file: File path string, path-like object, or file-like object.
+	:returns: File-like object.
+	"""
+	if hasattr(file, '__fspath__'):
+		# Implements path-like protocol - new in 3.6
+		# Convert to string
+		file = str(file.__fspath__())
+
+	if isinstance(file, str):
+		# File path as string
+		return open(file, mode)
+
+	else:
+		# Assume a file-like object
+		return file
+
+
 class MultiSequenceReader:
 	"""Reads sequences one at a time from several files in parallel.
 
-	Acts as an iterator over tuples of reads, as :class:`Bio.SeqIO.SeqRecord`
+	Acts as an iterator over tuples of sequences as :class:`Bio.SeqIO.SeqRecord`
 	objets.
 
 	This class is not thread-safe.
@@ -79,8 +99,8 @@ class MultiSequenceReader:
 
 	TODO: enable easy subsampling, tracking of indices, seeking, etc.
 
-	:param files: Sequence of three sequence files, as file path strings or
-		readable file-like objects
+	:param files: Sequence of readable files, as file path strings or file-like
+		objects.
 	:param str format_: Sequence file format as understood by
 		:func:`Bio.SeqIO.parse`.
 	"""
@@ -94,33 +114,37 @@ class MultiSequenceReader:
 		self.nfiles = len(files)
 
 		# Convert files argument to file objects
-		file_objs = []
+		self.files = tuple(map(to_file_obj, files))
 
-		for file in files:
-			if hasattr(file, '__fspath__'):
-				# Implements path-like protocol - new in 3.6
-				# Convert to string
-				file = str(file.__fspath__())
-
-			if isinstance(file, str):
-				# File path as string
-				file_objs.append(open(file))
-
-			else:
-				# Assume a file-like object
-				file_objs.append(file)
-
-		self.files = tuple(file_objs)
-
-		# Biopython parser iterators
-		self._parsers = tuple(SeqIO.parse(fobj, format_) for fobj in self.files)
+		# Create BioPython parser iterators for files.
+		self._parsers = tuple(
+			SeqIO.parse(fobj, self.format_)
+			for fobj in self.files
+		)
 
 	def __iter__(self):
 		# It's an iterator already, so return self
 		return self
 
+	def __enter__(self):
+		return self
+
+	def __exit__(self, *args):
+		"""Closes all files."""
+		self.close()
+
+	def close(self):
+		"""Closes all filles the instance has open for reading."""
+		for file in self.files:
+			file.close()
+
 	def __next__(self):
-		# Get the next set tuple of records
+		"""Get the next set tuple of records.
+
+		:returns: Tuple containing sequence record for each file.
+		:rtype: tuple[Bio.SeqIO.SeqRecord]
+		"""
+		# Check we're not already at the end
 
 		records = []
 		finished = False
@@ -142,16 +166,27 @@ class MultiSequenceReader:
 			# At least one file ran out
 
 			if records:
-				# Some files still had records left
 				warn('Not all sequence files contain the same number of records')
 
-			# This is a special exception raised by iterators when there is no
-			# next item
 			raise StopIteration()
 
 		else:
 			# Got a record from each file
 			return tuple(records)
+
+	def _skip_next(self):
+		"""Skip over the next set of sequences.
+
+		:returns: True if skipped, False if already at end.
+		"""
+		try:
+			# TODO - can implement this faster for FASTQ by reading over
+			# next four lines of each file without parsing
+			next(self)
+			return True
+
+		except StopIteration:
+			return False
 
 	def skip(self, n=1):
 		"""Skip over one or more records in each of the files.
@@ -159,39 +194,20 @@ class MultiSequenceReader:
 		For certain file formats, this is quicker than parsing a record and then
 		discarding the result.
 
-		:param int n: Number of reads to skip over in each file.
-		:returns: Number of reads actually skipped. Will be less than n if there
-			are fewer than n records remaining in the files.
+		:param int n: Number of sequences to skip over in each file.
+		:returns: Number of sequences actually skipped. Will be less than n if
+			there are fewer than n records remaining in the files.
 		:rtype: int
 		"""
+		if n < 0:
+			raise ValueError('n must be positive')
+
 		nskipped = 0
 
 		for i in range(n):
-			try:
-				# TODO - can implement this faster for FASTQ by reading over
-				# next four lines of each file without parsing
-				next(self)
-			except StopIteration:
+			if not self._skip_next():
 				break
 
 			nskipped += 1
 
 		return nskipped
-
-	def tell(self):
-		"""Get the index of the next set of sequence records to be read.
-
-		:rtype: int
-		"""
-		raise NotImplementedError()  # TODO
-
-	def seek(self, index):
-		"""Seek all files to the record with the given index.
-
-		:param int index: Index of next set of records to read.
-		"""
-		raise NotImplementedError()  # TODO
-
-	def reset(self):
-		"""Seek back to the beginning of all files."""
-		raise NotImplementedError()  # TODO
