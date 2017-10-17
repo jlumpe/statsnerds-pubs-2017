@@ -44,7 +44,7 @@ def calc_freqs(reads, scale):
 
 	# normalize by the size of the pool
 	for f in freqs:
-		freqs[f] = np.log2(1 + freqs[f] / len(reads) * (scale))
+		freqs[f] = np.log2( (freqs[f]+1) / len(reads) * (scale))
 
 	return freqs
 
@@ -100,22 +100,22 @@ if __name__ == "__main__":
 	rep2_od3 = 1.8
 
 	print("Read in Yeast Mode reads")
-	ym_1_0, q_1_0 = parseFASTQ2("../BUDS-1-0_S7_L008_R1_001.fastq", False)
-	ym_1_12, q_1_12 = parseFASTQ2("../YM-1-12_S24_L008_R1_001.fastq", False) 
-	ym_1_24, q_1_24 = parseFASTQ2("../YM-1-24_S25_L008_R1_001.fastq", False)
+	#ym_1_0, q_1_0 = parseFASTQ2("../BUDS-1-0_S7_L008_R1_001.fastq", False)
+	#ym_1_12, q_1_12 = parseFASTQ2("../YM-1-12_S24_L008_R1_001.fastq", False) 
+	#ym_1_24, q_1_24 = parseFASTQ2("../YM-1-24_S25_L008_R1_001.fastq", False)
 	
-	ym_2_0, q_2_0 = parseFASTQ2("../YM-2-0_S26_L008_R1_001.fastq", False)
-	ym_2_12, q_2_12 = parseFASTQ2("../YM-2-12_S27_L008_R1_001.fastq", False)
-	ym_2_24, q_2_24 = parseFASTQ2("../YM-2-24_S28_L008_R1_001.fastq", False)
+	#ym_2_0, q_2_0 = parseFASTQ2("../YM-2-0_S26_L008_R1_001.fastq", False)
+	#ym_2_12, q_2_12 = parseFASTQ2("../YM-2-12_S27_L008_R1_001.fastq", False)
+	#ym_2_24, q_2_24 = parseFASTQ2("../YM-2-24_S28_L008_R1_001.fastq", False)
 
 	#print("Read in Robert reads")
-	#r_1_0, rq_1_0 = parseFASTQ2("../RWN-1-0_S1_L008_R1_001.fastq", False)
-	#r_1_12, rq_1_12 = parseFASTQ2("../RWN-1-12_S2_L008_R1_001.fastq", False) 
-	#r_1_24, rq_1_24 = parseFASTQ2("../RWN-1-24_S3_L008_R1_001.fastq", False)
+	r_1_0, rq_1_0 = parseFASTQ2("../RWN-1-0_S1_L008_R1_001.fastq", False)
+	r_1_12, rq_1_12 = parseFASTQ2("../RWN-1-12_S2_L008_R1_001.fastq", False) 
+	r_1_24, rq_1_24 = parseFASTQ2("../RWN-1-24_S3_L008_R1_001.fastq", False)
 	
-	#r_2_0, rq_2_0 = parseFASTQ2("../RWN-2-0_S4_L008_R1_001.fastq", False)
-	#r_2_12, rq_2_12 = parseFASTQ2("../RWN-2-12_S5_L008_R1_001.fastq", False)
-	#r_2_24, rq_2_24 = parseFASTQ2("../RWN-2-24_S6_L008_R1_001.fastq", False)
+	r_2_0, rq_2_0 = parseFASTQ2("../RWN-2-0_S4_L008_R1_001.fastq", False)
+	r_2_12, rq_2_12 = parseFASTQ2("../RWN-2-12_S5_L008_R1_001.fastq", False)
+	r_2_24, rq_2_24 = parseFASTQ2("../RWN-2-24_S6_L008_R1_001.fastq", False)
 
 	print("Calc mut freqs")
 	freqs_ym_1_0 = calc_freqs(ym_1_0, 1)
@@ -137,8 +137,8 @@ if __name__ == "__main__":
 	fitness_ym_2 = calc_fitness(freqs_ym_2_0, freqs_ym_2_12, freqs_ym_2_24)
 
 	print("Write fitness arrays")
-	pic.dump(fitness_ym_1, open("fitness_ym_1.pkl", "wb"))
-	pic.dump(fitness_ym_2, open("fitness_ym_2.pkl", "wb"))
+	pic.dump(fitness_ym_1, open("fitness_ym_1.2.pkl", "wb"))
+	pic.dump(fitness_ym_2, open("fitness_ym_2.2.pkl", "wb"))
 
 	print("done!")
 	
