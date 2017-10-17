@@ -12,4 +12,5 @@ setup(
 		'Biopython>=1.69',
 		'numpy>=1.12'
 	],
+	include_package_data=True,
 )
