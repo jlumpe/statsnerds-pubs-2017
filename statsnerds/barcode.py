@@ -126,4 +126,5 @@ def get_barcode(read2, params=DEFAULT_PARAMS):
 	:returns: Barcode sequence. If no valid barcode found, returns None.
 	:rtype: str
 	"""
-	raise NotImplementedError()  # TODO
+	barcode = str(read2[:18])
+	return None if 'N' in barcode else barcode
