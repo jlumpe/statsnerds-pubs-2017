@@ -18,6 +18,9 @@ DEFAULT_PARAMS = {
 	'point_mutation_high_qual': 30,  # Min PHRED score for high quality point mutation
 	'point_mutation_low_qual': 20,  # Min PHRED score for low quality point mutation
 	'max_point_mutations': 10,  # Mutation finding will abort if more than this may point mutations are found
+	'max_mutated_codons': 5,  # Abort after seeing this many mutated codons for one read pair
+	'codon_mutation_min_qual': 15,  # Won't consider codons where no bases are mutated with a quality >= this value
+	'wt_bias': 15,  # Quality bias of each base towards wild-type over mutation
 }
 
 
@@ -292,3 +295,184 @@ def get_barcode(read2, params=DEFAULT_PARAMS):
 	"""
 	barcode = str(read2[:18])
 	return None if 'N' in barcode else barcode
+
+
+def find_possible_codon_mutations(wt, forward, reverse, params=DEFAULT_PARAMS):
+	"""Locate possible mutated codons and get base reads for them.
+
+	:param str wt: Wild-type DNA sequence.
+	:param forward: Forward read.
+	:type forward: Bio.SeqIO.SeqRecord
+	:param reverse: Reverse read.
+	:type reverse: Bio.SeqIO.SeqRecord
+	:param dict params: Parameter dictionary.
+
+	:returns: Generator yielding tuples of ``(residue_index, codon_reads)``
+		where ``codon_reads`` is a length-3 list where each element is a list of
+		``(base, quality)`` pairs of base reads for the corresponding position
+		in the codon.
+	"""
+
+	threshold = params['codon_mutation_min_qual']
+
+	reverse_rc = reverse.reverse_complement()
+
+	forward_qual = forward.letter_annotations['phred_quality']
+	reverse_qual = reverse_rc.letter_annotations['phred_quality']
+
+	overlap_start = len(wt) - len(reverse)
+	overlap_end = len(forward)
+
+	# For each codon in WT sequence
+	for res in range(len(wt) // 3):
+
+		ibegin = res * 3
+		iend = ibegin + 3
+
+		wt_codon = wt[ibegin:iend]
+
+		mutations_found = False
+
+		# Check forward read
+		if ibegin < overlap_end:
+			# Check forward codon (could be partial) against WT
+			f_codon = str(forward.seq[ibegin:iend])
+			if f_codon != wt_codon[:len(f_codon)]:
+				mutations_found = True
+
+		# Check reverse read
+		if iend > overlap_start:
+
+			# Begin/end index from start of RC of reverse read
+			rbegin = max(ibegin - overlap_start, 0)
+			rend = iend - overlap_start
+
+			# Sequence and start index of reverse codon (may be partial)
+			r_codon = str(reverse_rc.seq[rbegin:rend])
+			r_offset = 3 + rbegin - rend
+
+			# Check reverse codon vs WT
+			if r_codon != wt_codon[r_offset:]:
+				mutations_found = True
+
+		if mutations_found:
+			# Compile reads for each base in codon into list
+
+			codon_reads = [[] for i in range(3)]
+			best_mutation_score = 0
+
+			# Add forward base reads
+			if ibegin < overlap_end:
+				f_codon_qual = forward_qual[ibegin:iend]
+				for i, (f_b, q) in enumerate(zip(f_codon, f_codon_qual)):
+					codon_reads[i].append((f_b, q))
+					if f_b != wt_codon[i] and q > best_mutation_score:
+						best_mutation_score = q
+
+			# Add reverse base reads
+			if iend > overlap_start:
+				r_codon_qual = reverse_qual[rbegin:rend]
+				for i, r_b, q in zip(range(r_offset, 3), r_codon, r_codon_qual):
+					codon_reads[i].append((r_b, q))
+					if r_b != wt_codon[i] and q > best_mutation_score:
+						best_mutation_score = q
+
+			if best_mutation_score >= threshold:
+				yield res, codon_reads
+
+
+def score_codon(codon, codon_reads):
+	"""Score a codon sequence against reads of its bases.
+
+	:param str codon: Codon sequence.
+	:param list codon_reads: Reads for each position of codon. See 2nd element
+		of return value of :fund:`.find_possible_codon_mutations`.
+	:returns: Score of codon.
+	:rtype: int
+	"""
+	score = 0
+
+	for base, codon_reads in zip(codon, codon_reads):
+		for read_base, read_qual in codon_reads:
+			if read_base == base:
+				score += read_qual
+
+	return score
+
+
+def get_best_codon_match(wt_codon, allowed, codon_reads):
+	"""Get the best codon match for a set of codon reads.
+
+	:param str wt_codon: Sequence of WT codon.
+	:param allowed: Set of (non-WT) codons to choose from.
+	:type allowed: set[str]
+	:param list codon_reads: Reads for each position of codon. See 2nd element
+		of return value of :fund:`.find_possible_codon_mutations`.
+
+	:returns: Tuple of ``(best_codon, codon_score, wt_score)``.
+	:rtype: tuple[str, int, int]
+	"""
+
+	wt_score = score_codon(wt_codon, codon_reads)
+
+	best_mut = None
+	best_mut_score = None
+
+	for mut_codon in allowed:
+		score = score_codon(mut_codon, codon_reads)
+		if best_mut_score is None or score > best_mut_score:
+			best_mut = mut_codon
+			best_mut_score = score
+
+	return best_mut, best_mut_score, wt_score
+
+
+def find_mutation_from_allowed(allowed, forward, reverse, params=DEFAULT_PARAMS):
+	"""Find a sequence mutation given the allowed mutations per residue/codon.
+
+	:param dict allowed: Mapping from residue/codon index to sets of allowed
+		codon sequences.
+	:param forward: Forward read.
+	:type forward: Bio.SeqIO.SeqRecord
+	:param reverse: Reverse read.
+	:type reverse: Bio.SeqIO.SeqRecord
+	:param dict params: Parameter dictionary.
+
+	:returns: ``(residue_index, codon_seq)`` tuple. If no mutation is detected
+		(wild-type) both values will be None.
+	:rtype: tuple[int, str]
+
+	:raises BarcodeError: If there seems to be something wrong with the reads
+		and the mutation cannot be called with confidence.
+	"""
+
+	wt = params['wt_seq']
+	max_mutated_codons = params['max_mutated_codons']
+	wt_bias = params['wt_bias']
+
+	# Find possible mutated codons
+	mutated_codons = []
+
+	for res, reads in find_possible_codon_mutations(wt, forward, reverse):
+		if len(mutated_codons) >= max_mutated_codons:
+			raise BarcodeError('Maximum number of codon mutations exceeded')
+		mutated_codons.append((res, reads))
+
+	best_score = None
+	best_codon = None
+	best_res = None
+
+	for res, reads in mutated_codons:
+		wt_codon = wt[res * 3:res * 3 + 3]
+		best_mut, best_mut_score, wt_score = get_best_codon_match(wt_codon, allowed[res], reads)
+
+		score = best_mut_score - wt_score
+		if best_score is None or score > best_score:
+			best_score = score
+			best_res = res
+			best_codon = best_mut
+
+	if best_res is not None and best_score >= 3 * wt_bias:
+		return (best_res, best_codon)
+	else:
+		return (None, None)
